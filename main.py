@@ -10,8 +10,7 @@ if __name__ == '__main__':
     ksfull, mask = load_data(ksfull_path, mask_path)
     ksfull = ksfull['ksfull']
     mask = np.rot90(mask)
-
-    rec = Reconstruction(None, ksfull, mask)
-
-    plt.imshow(abs(rec.get_sensitivity())[:, :, 0], cmap='gray')
+    rec = Reconstruction('cg', ksfull, mask)
+    image = rec.reconstruct(20)
+    plt.imshow(image, cmap='gray')
     plt.show()
