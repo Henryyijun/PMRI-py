@@ -1,11 +1,10 @@
-import matplotlib.pyplot as plt
 from mask_utils.get_calibration import get_calibration
 from utils.fft_utils import *
 from utils.sos import sos
 
 
 class Reconstruction:
-    def __init__(self, algorithm, data, mask):
+    def __init__(self, data, mask, algorithm):
         self.algorithm = algorithm
         self.data = data
         self.mask = mask
@@ -33,11 +32,29 @@ class Reconstruction:
     def get_sensitivity(self):
         return self.__sensitivity
 
-    def reconstruct(self, max_iter):
-        if self.algorithm.lower() == 'cg':
-            return self.__cg_reconstruct(max_iter)
+    def reconstruct(self, max_iter, regularization=None, mu=0):
+        """
+        :param max_iter: The max iteration number of the algorithm
+        :param regularization: The regularization method, l1, l2, TV, wavelet, tight frame
+        :param mu: The positive regularization parameter
+        :return: The reconstruction image
+        """
+        if regularization is not None:
+            if regularization == 'l2':
+                if self.algorithm.lower() == 'cg':
+                    return self.__l2__cg_reconstruct(max_iter, mu)
+            elif regularization == 'l1':
+                pass
+            elif regularization == 'wavelet':
+                pass
+            elif regularization == 'framelet':
+                pass
+
         else:
-            pass
+            if self.algorithm.lower() == 'cg':
+                return self.__cg_reconstruct(max_iter)
+            else:
+                pass
 
     def __cg_reconstruct(self, max_iter):
         """
@@ -67,6 +84,38 @@ class Reconstruction:
 
             bk = np.dot(np.conj(rk_1.flatten()), rk_1.flatten()) / np.dot(np.conj(rk.flatten()), rk.flatten())
             pk = rk_1 + bk*pk
+            rk = rk_1
+            x = np.abs(xk)
+
+        return x
+
+    def __l2__cg_reconstruct(self, max_iter, mu):
+        """
+        This function uses conjugate gradient methods with l2 regularization to solve the pMRI problem
+        PFSx = y => Ax = y, the normal equation is AtAx + mu x= Aty => Bx = b, where B = (AtA+mu)
+        :param max_iter: The iteration number of the algorithm
+        :return: reconstruction image.
+        """
+        mask = np.dstack([self.mask] * self.data.shape[-1])
+        A = Matrix(mask, self.__sensitivity)
+        y = mask * self.data
+        x = np.zeros(ifft_2d(y).shape[:2])
+        B = lambda xx: A.mul_t(A.mul(xx)) + mu*xx
+        b = A.mul_t(y)
+        rk = b - B(x)
+        pk = rk
+
+        for i in range(max_iter):
+            print("The %d iteration" % i)
+            Bpk = B(pk)
+            ak = np.dot(np.conj(rk.flatten()), rk.flatten()) / np.dot(np.conj(pk).flatten(), Bpk.flatten())
+            xk = x + ak * pk
+            rk_1 = rk - ak * B(pk)
+            if np.linalg.norm(rk_1.flatten()) < 1E-2:
+                break
+
+            bk = np.dot(np.conj(rk_1.flatten()), rk_1.flatten()) / np.dot(np.conj(rk.flatten()), rk.flatten())
+            pk = rk_1 + bk * pk
             rk = rk_1
             x = np.abs(xk)
 
