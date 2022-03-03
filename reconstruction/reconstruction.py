@@ -1,6 +1,10 @@
+import numpy as np
+
 from mask_utils.get_calibration import get_calibration
 from utils.fft_utils import *
 from utils.sos import sos
+from utils.wthresh import soft_thresh
+import matplotlib.pyplot as plt
 
 
 class Reconstruction:
@@ -26,7 +30,7 @@ class Reconstruction:
     def __sensitivity_compute(self, data_center):
         image_zero_fill = ifft_2d(data_center)
         image_sos = sos(image_zero_fill)
-        sensitivity = image_zero_fill / np.dstack([image_sos]*data_center.shape[-1])
+        sensitivity = image_zero_fill / np.dstack([image_sos] * data_center.shape[-1])
         return sensitivity
 
     def get_sensitivity(self):
@@ -42,9 +46,10 @@ class Reconstruction:
         if regularization is not None:
             if regularization == 'l2':
                 if self.algorithm.lower() == 'cg':
-                    return self.__l2__cg_reconstruct(max_iter, mu)
+                    return self.__l2_cg_reconstruct(max_iter, mu)
             elif regularization == 'l1':
-                pass
+                if self.algorithm == 'fista':
+                    return self.__fista_reconstruct(max_iter, mu)
             elif regularization == 'wavelet':
                 pass
             elif regularization == 'framelet':
@@ -63,7 +68,7 @@ class Reconstruction:
         :param max_iter: The iteration number of the algorithm
         :return: reconstruction image.
         """
-        mask = np.dstack([self.mask]*self.data.shape[-1])
+        mask = np.dstack([self.mask] * self.data.shape[-1])
         A = Matrix(mask, self.__sensitivity)
         y = mask * self.data
         x = np.zeros(ifft_2d(y).shape[:2])
@@ -83,13 +88,13 @@ class Reconstruction:
                 break
 
             bk = np.dot(np.conj(rk_1.flatten()), rk_1.flatten()) / np.dot(np.conj(rk.flatten()), rk.flatten())
-            pk = rk_1 + bk*pk
+            pk = rk_1 + bk * pk
             rk = rk_1
             x = np.abs(xk)
 
         return x
 
-    def __l2__cg_reconstruct(self, max_iter, mu):
+    def __l2_cg_reconstruct(self, max_iter, mu):
         """
         This function uses conjugate gradient methods with l2 regularization to solve the pMRI problem
         PFSx = y => Ax = y, the normal equation is AtAx + mu x= Aty => Bx = b, where B = (AtA+mu)
@@ -100,7 +105,7 @@ class Reconstruction:
         A = Matrix(mask, self.__sensitivity)
         y = mask * self.data
         x = np.zeros(ifft_2d(y).shape[:2])
-        B = lambda xx: A.mul_t(A.mul(xx)) + mu*xx
+        B = lambda xx: A.mul_t(A.mul(xx)) + mu * xx
         b = A.mul_t(y)
         rk = b - B(x)
         pk = rk
@@ -121,6 +126,37 @@ class Reconstruction:
 
         return x
 
+    def __fista_reconstruct(self, max_iter, mu):
+        """
+        Fast Iterative Soft Thresholding Algorithm(FISTA),
+        problem: ||Ax-b||^2 + mu*||x||_1, gradient: At(Ax-b)
+        :param max_iter:
+        :param mu:
+        :return: The reconstruction image.
+        """
+        mask = np.dstack([self.mask] * self.data.shape[-1])
+        A = Matrix(mask, self.__sensitivity)
+        b = mask * self.data
+        l = 1
+        tk = 1
+        xk = sos(ifft_2d(b))
+        yk = xk.copy()
+
+        for i in range(max_iter):
+            print("The %d iteration" % i)
+            # print(self.gradient(A, yk, b))
+            xk1 = soft_thresh(yk - self.gradient(A, yk, b)/l, mu/l)
+            tk1 = 1/2 + np.sqrt(1 + 4*tk**2)/2
+            yk1 = xk1 + (tk-1)/tk1 * (xk1 - xk)
+            # update
+            xk = np.abs(xk1.copy())
+            tk = tk1.copy()
+            yk = np.abs(yk1.copy())
+        return np.abs(xk)
+
+    def gradient(self, A, xx, b):
+        return A.mul_t(A.mul(xx) - b)
+
 
 class Matrix:
     """
@@ -139,7 +175,7 @@ class Matrix:
         :return: The under-sampled k-space data
         """
         row, col, coils = self.sensitivity.shape
-        xx = np.dstack([x]*coils)
+        xx = np.dstack([x] * coils)
         y = self.mask * fft_2d(self.sensitivity * xx)
         return y
 
@@ -149,13 +185,6 @@ class Matrix:
         :param x: The under-sampled k-space data
         :return: Atx
         """
-        y = ifft_2d(self.mask * x)
-        y = np.conj(self.sensitivity) * y
+        yy = ifft_2d(self.mask * x)
+        y = np.conj(self.sensitivity) * yy
         return np.sum(y, axis=2)
-
-
-
-
-
-
-
